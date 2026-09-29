@@ -1,0 +1,136 @@
+name: E2E
+
+# Dogfood: @qualflare/webdriverio reports on a suite of itself, and the PUBLISHED CLI
+# uploads the result to Qualflare.
+#
+# Why this exists: every other suite in this repo stops at the report file on
+# disk, so nothing exercises the reporter/CLI pairing. That seam is where this
+# project's two worst bugs lived — a join key that matched nothing for the very
+# reporter the feature was built for, and a framework label the server rejected
+# with a 400 — and both were invisible to unit tests on either side of it.
+#
+# The CLI is deliberately UNPINNED. A CLI release that stops understanding what
+# this reporter emits should turn this red; that is the whole point.
+#
+# The suite runs in THREE workers, so every upload also proves the one property
+# a WebdriverIO reporter can silently get wrong: that every worker's report
+# carries one runId. `qf collect` merges only the newest run's files, so a
+# regression there uploads one spec file's results and still exits 0 -- which is
+# why the verifier and assert-launch-landed.py both look at what landed.
+#
+# The suite contains NO failing tests by construction. Status mapping for
+# failures is covered by test/integration/; this run is uploaded, so red has to
+# mean a real regression rather than expected fixture noise. Please do not
+# "helpfully" add a failing test here.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  # NOT cancel-in-progress. Every push to main should produce its own launch;
+  # cancelling would silently drop commits out of the Qualflare trend line, which
+  # is the one thing this workflow exists to provide.
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: Dogfood suite + upload to Qualflare
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # branch/commit come from GITHUB_REF_NAME/GITHUB_SHA, so no history is
+          # needed for git detection.
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+
+      # The suite loads the reporter from dist/, so this is not optional.
+      - name: Build
+        run: npm run build
+
+      # continue-on-error on the next two steps, with a gate at the end. A red
+      # dogfood run is precisely the run Qualflare most needs to see: failing
+      # before the upload would hide the regression from the dashboard that exists
+      # to show it. The job still fails — just after the data is in.
+      - name: Run the dogfood suite
+        id: suite
+        continue-on-error: true
+        run: npm run test:e2e
+
+      - name: Verify the report says what the package should make it say
+        id: verify
+        continue-on-error: true
+        run: npm run verify:e2e
+
+      - name: Install the published CLI
+        run: |
+          npm install -g @qualflare/cli
+          # Printed so a red run caused by a CLI release is diagnosable from the
+          # log alone, without a commit of ours to point at.
+          qf version
+
+      # Captured BEFORE the upload so the step after it can require the number to
+      # move. The script is identical in every reporter repo, so there is one
+      # implementation to fix rather than several.
+      - name: Record the project's run count before uploading
+        id: runs_before
+        run: echo "count=$(python3 e2e/assert-launch-landed.py qualflare-webdriverio --print)" >> "$GITHUB_OUTPUT"
+
+      # `--force` is required: stdin is not a TTY here, and a re-login onto an
+      # existing identifier fails without it. The token goes via the environment,
+      # NOT argv, so it never lands in the process list. `qf <id> collect` only
+      # EXISTS after a successful login — the subcommand is built from the
+      # credential store at startup — so these cannot be reordered.
+      #
+      # No -e flag: the reporter records environment: 'production' in the report
+      # itself, so there is one source of truth rather than two that can drift.
+      - name: Upload to Qualflare
+        id: upload
+        if: hashFiles('e2e-results/*.json') != ''
+        env:
+          QF_TOKEN: ${{ secrets.QF_TOKEN }}
+          QF_BRANCH: ${{ github.ref_name }}
+          QF_COMMIT: ${{ github.sha }}
+        run: |
+          if [ -z "$QF_TOKEN" ]; then
+            echo "::error::QF_TOKEN is not set on this repository."
+            exit 1
+          fi
+          qf login qualflare-webdriverio --force
+          qf qualflare-webdriverio collect ./e2e-results
+
+      # The upload's exit code only proves the server returned 2xx. This proves a
+      # launch reached the project the README's badge actually reads — the two
+      # diverged for 11 consecutive green runs on qualflare-jest. Runs after the
+      # upload, so a failure here never costs us the data.
+      - name: Assert the launch reached the project the badge reads
+        if: steps.upload.outcome == 'success'
+        run: python3 e2e/assert-launch-landed.py qualflare-webdriverio --before "${{ steps.runs_before.outputs.count }}"
+
+      - name: Keep the report when something went wrong
+        if: steps.suite.outcome != 'success' || steps.verify.outcome != 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-results
+          path: e2e-results/
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Fail if the suite or the verifier was red
+        if: steps.suite.outcome != 'success' || steps.verify.outcome != 'success'
+        run: |
+          echo "::error::Dogfood suite=${{ steps.suite.outcome }} verifier=${{ steps.verify.outcome }} — the data was still uploaded so the regression is visible in Qualflare."
+          exit 1

@@ -1,0 +1,123 @@
+name: Publish npm
+
+# Publishing happens HERE, not from a laptop, and that is not a preference:
+# package.json sets `publishConfig.provenance: true`, and npm can only generate a
+# provenance attestation inside a supported CI with an OIDC token
+# (`id-token: write`). A local `npm publish` fails rather than quietly publishing
+# without provenance, so this workflow is the only path that works.
+#
+# Mirrors the sibling reporters' pattern: build and publish on a version tag,
+# with the tag asserted against package.json first.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  npm-publish:
+    name: Publish @qualflare/webdriverio
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance attestations via Sigstore OIDC
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # Matches ci.yml, so the tarball is built on the same Node the test
+          # suite ran against. `engines` allows >=18.20.
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci
+
+      # A tag that disagrees with package.json publishes a version nobody asked
+      # for, under a git ref that does not describe it. Cheapest possible check,
+      # and it runs before anything is built.
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME (version $TAG_VERSION) does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+
+      # npm unpublish is heavily restricted, so everything that can be checked
+      # before the irreversible step is checked here — including the two gates
+      # that exist because of real failures in this package.
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
+      # Loads every entry of dist/ in BOTH formats and constructs the reporter.
+      # This catches an ESM/CJS interop break, which made this very reporter's
+      # CJS build throw "Class extends value #<Object> is not a constructor"
+      # while every other check above passed. Publishing that is unrecoverable.
+      - run: npm run test:built
+
+      # A real WebdriverIO run, two workers, headless Chrome.
+      - run: npm run test:integration
+
+      # The dogfood suite, end to end against the built reporter. No upload here:
+      # the E2E workflow owns the Qualflare launch on every push to main, and a
+      # tag build should not add a second launch for the same commit.
+      - name: Dogfood the built reporter
+        run: npm run e2e
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish
+
+      # `npm publish` exiting 0 means the registry accepted the tarball. It does
+      # not prove the version is installable, or that provenance actually
+      # attached — and this family has been bitten before by treating a 2xx as
+      # proof that the thing downstream users read had changed.
+      - name: Verify the published version resolves
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          # 5 minutes, not 1. The registry's READ path lags its write path, and it
+          # lags much longer for the FIRST publish of a new package name than for
+          # a later version of an existing one. v0.1.0 took well over a minute to
+          # become resolvable, so a 60s budget reported a perfectly good publish
+          # as a failure.
+          for attempt in $(seq 1 20); do
+            PUBLISHED="$(npm view "@qualflare/webdriverio@$VERSION" version 2>/dev/null || true)"
+            [ -n "$PUBLISHED" ] && break
+            echo "not visible on the registry yet (attempt $attempt of 20); waiting"
+            sleep 15
+          done
+
+          if [ -z "${PUBLISHED:-}" ]; then
+            # Distinguish the two causes rather than reporting both as "does not
+            # resolve". An anonymous 404 on a scoped package looks identical
+            # whether it is still propagating or was published RESTRICTED, and
+            # those need opposite responses: wait, versus fix access and re-publish.
+            ACCESS="$(npm access get status "@qualflare/webdriverio" 2>/dev/null || true)"
+            echo "npm access get status -> ${ACCESS:-unknown}"
+            case "$ACCESS" in
+              *public*)
+                echo "::error title=Published, public, still propagating::@qualflare/webdriverio@$VERSION is public but not resolvable after 5 minutes. The publish itself succeeded — check the registry before re-running anything."
+                ;;
+              *)
+                echo "::error title=Published RESTRICTED::@qualflare/webdriverio@$VERSION is not public, so it 404s for everyone else. publishConfig.access is meant to prevent this."
+                ;;
+            esac
+            exit 1
+          fi
+          echo "@qualflare/webdriverio@$PUBLISHED resolves"
+          # Provenance is the reason this job exists at all, so its absence is an
+          # error rather than a note.
+          if npm view "@qualflare/webdriverio@$PUBLISHED" dist.attestations --json 2>/dev/null | grep -q provenance; then
+            echo "provenance attestation present"
+          else
+            echo "::error title=No provenance::The version published without a provenance attestation, though publishConfig requests one."
+            exit 1
+          fi

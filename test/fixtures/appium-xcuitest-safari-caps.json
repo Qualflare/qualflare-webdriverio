@@ -1,0 +1,21 @@
+{
+  "_source": "Capabilities returned by a real Appium 3.8.0 + XCUITest 12.13.3 session, mobile Safari on an iPhone 17 Pro simulator (iOS 26.5), as handed to onRunnerStart. Only udid and sessionId were blanked.",
+  "capabilities": {
+    "webStorageEnabled": false,
+    "locationContextEnabled": false,
+    "browserName": "Safari",
+    "platform": "MAC",
+    "javascriptEnabled": true,
+    "databaseEnabled": false,
+    "takesScreenshot": true,
+    "networkConnectionEnabled": false,
+    "platformName": "iOS",
+    "automationName": "XCUITest",
+    "deviceName": "iPhone 17 Pro",
+    "udid": "00000000-0000-0000-0000-000000000000",
+    "platformVersion": "26.5",
+    "wdaLaunchTimeout": 600000,
+    "newCommandTimeout": 600,
+    "sessionId": "00000000-0000-0000-0000-000000000000"
+  }
+}
