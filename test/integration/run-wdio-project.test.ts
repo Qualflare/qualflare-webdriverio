@@ -59,10 +59,20 @@ async function runFixture(
   };
   // The service must be what makes the workers agree, so nothing may hand
   // them a shared id from outside: no QUALFLARE_RUN_ID and no CI run id.
-  for (const name of ['QUALFLARE_RUN_ID', 'GITHUB_ACTIONS', 'GITHUB_RUN_ID', 'GITLAB_CI', 'CI_PIPELINE_ID', 'CI']) {
-    delete env[name];
+  for (const name of Object.keys(env)) {
+    if (name === 'QUALFLARE_RUN_ID' || name === 'CI' || /^(GITHUB_|GITLAB_|CI_|BUILDKITE|CIRCLE|JENKINS|TF_BUILD|BITBUCKET)/.test(name)) {
+      delete env[name];
+    }
   }
-  const result = await execa('npx', ['wdio', 'run', 'wdio.conf.mjs'], { cwd: fixtureDir, env, reject: false });
+  // extendEnv: false, or execa merges process.env back in and the deletions
+  // above do nothing -- on GitHub Actions the workers then share
+  // GITHUB_RUN_ID, which is correct behaviour but not what this asserts.
+  const result = await execa('npx', ['wdio', 'run', 'wdio.conf.mjs'], {
+    cwd: fixtureDir,
+    env,
+    extendEnv: false,
+    reject: false,
+  });
 
   const files = fs.readdirSync(resultsDir);
   const reports = files
