@@ -84,7 +84,9 @@ jobs:
       - name: Confirm the matrix version is the one actually installed
         # Otherwise two green legs could both be testing the same version.
         run: |
-          INSTALLED="$(node -p "require('webdriverio/package.json').version")"
+          # Read from disk: webdriverio's exports map does not expose
+          # ./package.json, so require('webdriverio/package.json') throws.
+          INSTALLED="$(node -p "JSON.parse(require('fs').readFileSync('node_modules/webdriverio/package.json', 'utf8')).version")"
           echo "installed webdriverio: $INSTALLED (matrix asked for ${{ matrix.wdio }}.x)"
           case "$INSTALLED" in
             ${{ matrix.wdio }}.*) ;;
