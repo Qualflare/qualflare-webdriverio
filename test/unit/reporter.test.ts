@@ -322,6 +322,37 @@ describe('QualflareWebdriverioReporter', () => {
     expect(report.suites[0]!.category).toBe('appium');
   });
 
+  describe('run id without the service', () => {
+    // No QUALFLARE_RUN_ID and no CI id: the case the service used to be
+    // required for. Two reporters in one process share a parent, exactly as
+    // two workers of one `wdio run` share the launcher.
+    it('derives the run id from the launcher process, so workers agree', () => {
+      if (process.platform === 'win32') return; // PowerShell path: covered in CI integration.
+      vi.stubEnv('QUALFLARE_RUN_ID', '');
+      for (const name of ['CI', 'GITHUB_ACTIONS', 'GITHUB_RUN_ID', 'GITLAB_CI', 'CI_PIPELINE_ID']) vi.stubEnv(name, '');
+      vi.stubEnv('WDIO_WORKER_ID', '0-0');
+      const first = new Run(makeReporter(), 'file:///project/test/specs/a.spec.js').start().suite('A');
+      first.pass(first.test('t'), 't');
+      vi.stubEnv('WDIO_WORKER_ID', '0-1');
+      const second = new Run(makeReporter(), 'file:///project/test/specs/b.spec.js').start().suite('B');
+      second.pass(second.test('t'), 't');
+      first.end();
+      const reports = second.end();
+      const ids = new Set(reports.map((r) => r.metadata.runId));
+      expect(reports).toHaveLength(2);
+      expect(ids.size).toBe(1);
+      expect([...ids][0]).toMatch(/^launch-[0-9a-f]{32}$/);
+    });
+
+    it('keeps an explicit or service-provided run id over the launcher one', () => {
+      vi.stubEnv('WDIO_WORKER_ID', '0-0');
+      vi.stubEnv('QUALFLARE_RUN_ID', 'from-service');
+      const run = new Run(makeReporter()).start().suite('S');
+      run.pass(run.test('t'), 't');
+      expect(run.end()[0]!.metadata.runId).toBe('from-service');
+    });
+  });
+
   it('writes nothing when disabled', () => {
     const run = new Run(makeReporter({ enabled: false })).start().suite('S');
     run.pass(run.test('t'), 't');

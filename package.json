@@ -1,6 +1,6 @@
 {
   "name": "@qualflare/webdriverio",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Native WebdriverIO reporter for Qualflare — web and mobile (Appium) runs, with per-attempt retry history, flakiness, the screenshots WebdriverIO takes, device capabilities and author-facing metadata, merged across workers.",
   "keywords": [
     "qualflare",

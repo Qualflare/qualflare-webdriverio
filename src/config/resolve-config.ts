@@ -63,9 +63,11 @@ export interface QualflareWebdriverioOptions {
   framework?: 'webdriverio' | 'appium';
 }
 
-/** Where the resolved runId came from. `random` is the one that breaks
- * multi-worker runs, and the reporter warns about it. */
-export type RunIdSource = 'option' | 'env' | 'ci' | 'random';
+/** Where the resolved runId came from. `launcher` is derived by each worker
+ * from the `wdio run` process (see launcher-id.ts) and replaces `random` when
+ * that lookup succeeds; `random` is the one that breaks multi-worker runs, and
+ * the reporter warns about it. */
+export type RunIdSource = 'option' | 'env' | 'ci' | 'launcher' | 'random';
 
 export interface ResolvedReporterConfig {
   environment: string;
