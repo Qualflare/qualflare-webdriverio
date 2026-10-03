@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 — unreleased
+## 0.2.0 — 2026-10-03
 
 - **The service is now optional.** Without it, every worker of one `wdio run`
   derives the same run id from the launcher process, its pid and start time,
