@@ -160,6 +160,14 @@ npm run test:integration  # real WebdriverIO runs (needs Chrome)
 npm run e2e               # the dogfood suite + report verifier
 ```
 
+## Test reports
+
+This package reports its own dogfood suite to Qualflare, through itself: the
+reporter under test is the one that produced these runs, uploaded by the
+**published** `qualflare-cli`.
+
+[![Qualflare](https://api.qualflare.com/p/qualflare-webdriverio/banner.svg)](https://reports.qualflare.com/p/qualflare-webdriverio/launches)
+
 ## License
 
 Apache-2.0
