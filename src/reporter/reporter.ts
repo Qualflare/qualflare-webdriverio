@@ -30,6 +30,7 @@ import * as wdioReporterModule from '@wdio/reporter';
 import type { AfterCommandArgs, HookStats, RunnerStats, TestStats } from '@wdio/reporter';
 
 import { resolveCapabilities, type CapabilityInfo } from '../config/capabilities.js';
+import { LauncherRunId } from '../config/launcher-id.js';
 import { resolveDefaultExport } from '../interop.js';
 import { resolveConfig, type QualflareWebdriverioOptions, type ResolvedReporterConfig } from '../config/resolve-config.js';
 import { logger } from '../shared/logger.js';
@@ -71,6 +72,10 @@ interface Settling {
   keepMessages: boolean;
 }
 
+/** How long the end of a worker waits for a Windows launcher lookup still in
+ * flight: inside WebdriverIO's default 5s reporterSyncTimeout, with margin. */
+const LAUNCHER_WAIT_MS = 4_000;
+
 /** `"before all" hook`, `"after all" hook` (Mocha) and `beforeAll`/`afterAll`
  * (Jasmine) close the previous test's window; per-test hooks do not. */
 const ALL_HOOK = /(before|after)[\s-]?all/i;
@@ -87,11 +92,18 @@ export class QualflareWebdriverioReporter extends WDIOReporter {
   /** Tests that started and have no verdict yet, by uid. */
   private readonly live = new Map<string, TestIdentity & { startedAt?: Date }>();
   private settling: Settling | null = null;
+  /** Only when nothing better than a random id was found: see launcher-id.ts. */
+  private readonly launcherRunId: LauncherRunId | undefined;
+  /** False while the report waits for a launcher lookup still in flight. */
+  private synchronised = true;
 
   constructor(options: QualflareWebdriverioOptions & Record<string, unknown>) {
     super(options);
     this.config = resolveConfig(options);
     this.budget = new AttachmentBudget(this.config.maxTotalAttachmentBytes);
+    // Started now rather than at the end: on Windows the lookup takes seconds,
+    // and it can run for the whole of the worker's tests in the background.
+    this.launcherRunId = this.config.runIdSource === 'random' ? LauncherRunId.start() : undefined;
     if (options.outputDir && !options.resultsDir) {
       logger.info(
         `"outputDir" is WebdriverIO's log directory, not this reporter's; reports go to ` +
@@ -206,7 +218,28 @@ export class QualflareWebdriverioReporter extends WDIOReporter {
     }
     this.live.clear();
     endCurrentTest();
-    this.writeReport();
+
+    const lookup = this.launcherRunId;
+    if (!lookup || lookup.settled) {
+      this.writeReport();
+      return;
+    }
+    // A Windows lookup still in flight. WebdriverIO waits for a reporter whose
+    // isSynchronised is false, for up to reporterSyncTimeout (5s by default),
+    // so wait inside that budget, then fall back to a blocking lookup rather
+    // than write the report under an id the other workers do not share.
+    this.synchronised = false;
+    const budget = new Promise<void>((resolve) => setTimeout(resolve, LAUNCHER_WAIT_MS).unref());
+    void Promise.race([lookup.wait(), budget]).then(() => {
+      lookup.valueSync();
+      this.writeReport();
+      this.synchronised = true;
+    });
+  }
+
+  /** Read by @wdio/runner, which keeps the worker alive while this is false. */
+  override get isSynchronised(): boolean {
+    return this.synchronised;
   }
 
   /** Records one finished execution and opens its settling window. */
@@ -306,6 +339,10 @@ export class QualflareWebdriverioReporter extends WDIOReporter {
     if (!this.config.enabled) {
       return;
     }
+    const launcherId = this.launcherRunId?.value();
+    if (this.config.runIdSource === 'random' && launcherId) {
+      this.config = { ...this.config, runId: launcherId, runIdSource: 'launcher' };
+    }
 
     const cases: CaseWithFile[] = [];
     for (const record of this.records.values()) {
@@ -348,8 +385,9 @@ export class QualflareWebdriverioReporter extends WDIOReporter {
 
     if (this.config.runIdSource === 'random') {
       logger.warn(
-        'this worker made up its own runId, so `qf collect` will upload only ONE worker\'s results. ' +
-          'Add QualflareService to `services` in wdio.conf (or set QUALFLARE_RUN_ID) so every worker shares one. ' +
+        'this worker could not identify its `wdio` launcher process and made up its own runId, so ' +
+          '`qf collect` will upload only ONE worker\'s results. Add QualflareService to `services` in ' +
+          'wdio.conf (or set QUALFLARE_RUN_ID) so every worker shares one. ' +
           'See https://github.com/Qualflare/qualflare-webdriverio#setup',
       );
     }

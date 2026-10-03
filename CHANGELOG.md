@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.0 — unreleased
+
+- **The service is now optional.** Without it, every worker of one `wdio run`
+  derives the same run id from the launcher process, its pid and start time,
+  so `qf collect` merges all of them, and the next run gets a new id. Measured
+  on Linux (including inside WebdriverIO 9's per-worker `xvfb-run`), macOS and
+  Windows, on WebdriverIO 8 and 9. On Windows the lookup runs in the background
+  during the tests, and the reporter holds the worker open for it through
+  WebdriverIO's `isSynchronised`, within the default `reporterSyncTimeout`.
+- Precedence is unchanged otherwise: an explicit `runId`, then
+  `QUALFLARE_RUN_ID` (the service), then the CI run id, then the launcher, then
+  a random id with the existing warning.
+- The service is still needed for a programmatic `Launcher` run more than once
+  in one Node process, which shares one launcher process. It also still cleans
+  stale reports.
+
 ## 0.1.0 — 2026-10-03
 
 Initial release.

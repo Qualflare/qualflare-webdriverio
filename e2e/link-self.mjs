@@ -8,4 +8,5 @@ import * as path from 'node:path';
 const link = path.resolve('node_modules/@qualflare/webdriverio');
 fs.mkdirSync(path.dirname(link), { recursive: true });
 fs.rmSync(link, { recursive: true, force: true });
-fs.symlinkSync('../..', link, 'dir');
+// A junction on Windows: a directory symlink there needs admin rights.
+fs.symlinkSync(process.platform === 'win32' ? path.resolve('.') : '../..', link, process.platform === 'win32' ? 'junction' : 'dir');

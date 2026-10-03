@@ -34,13 +34,12 @@ newer to upload screenshots.
 
 ## Setup
 
-Add **both** the reporter and the service to `wdio.conf`:
+Add the reporter to `wdio.conf`:
 
 ```js
 // wdio.conf.js
 export const config = {
   // ...
-  services: ['@qualflare/webdriverio/service'],
   reporters: ['spec', ['@qualflare/webdriverio', { environment: 'staging' }]],
 };
 ```
@@ -52,36 +51,44 @@ npx wdio run wdio.conf.js
 qf <your-project> collect ./qualflare-results
 ```
 
-### Why the service is not optional
+### One run, many workers
 
 WebdriverIO runs every spec file in its own worker process, and every worker
-writes its own report. `qf collect` merges the files **of one run**, which it
-recognizes by a shared `runId`. When it finds several runs, it keeps the newest
-and ignores the rest.
+writes its own report. `qf collect` merges the files **of one run**, recognized
+by a shared `runId`. When it finds several runs, it keeps the newest and ignores
+the rest. So every worker of one run has to agree on the id. Here's where it
+comes from, first match wins:
 
-On a laptop, each worker has nothing to derive a shared id from, so each would
-invent its own. `qf collect` would then upload one spec file's results and exit
-0. The service runs once, in the launcher, before any worker starts, and hands
-every worker the same id. In CI it steps aside: the provider's run id (such as
-`GITHUB_RUN_ID`) is already shared, including across the machines of a sharded
-job.
+1. a `runId` option, or `QUALFLARE_RUN_ID` (set by the service below)
+2. the CI provider's run id, such as `GITHUB_RUN_ID`. It's shared by every
+   worker, including across the machines of a sharded job.
+3. the **`wdio run` launcher process** itself. Every worker of one run has the
+   same launcher, so each derives the same id from its process id and start
+   time, and the next run gets a new one. This works on Linux (including
+   inside WebdriverIO 9's per-worker `xvfb-run`), macOS and Windows. On
+   Windows, the lookup runs in the background while your tests do.
 
-It also removes this package's reports from **earlier** runs in
-`./qualflare-results` before the run starts, so a stale file never rides along.
-It never removes another tool's files or the current run's.
-
-If the reporter ever falls back to an id of its own, every worker says so on
+If all three fail, a worker falls back to an id of its own and says so on
 stderr.
 
-Can't add a service? Call `ensureRunId()` at the top of `wdio.conf` instead:
+### The service (optional)
 
 ```js
-import { ensureRunId } from '@qualflare/webdriverio';
-ensureRunId(); // before `export const config`
+services: ['@qualflare/webdriverio/service'],
 ```
 
-`wdio.conf` is evaluated in the launcher *and* again in every worker.
-`ensureRunId()` mints the id only in the launcher, and the workers inherit it.
+Add it when either of these applies:
+
+- **You start WebdriverIO programmatically, more than once in one process**
+  (`new Launcher(...).run()` in a loop). Those runs share one process, so step 3
+  above can't tell them apart. The service gives each run its own id.
+- **You want stale reports cleaned up.** Before each run, the service removes
+  this package's reports from *earlier* runs in `./qualflare-results`, so a
+  stale file never rides along. It never touches another tool's files or the
+  current run's.
+
+Setting `QUALFLARE_RUN_ID` yourself before each run works too. `ensureRunId()`
+isn't enough for the programmatic case, because it sets the id once per process.
 
 ### Using the classes directly
 

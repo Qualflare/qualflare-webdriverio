@@ -20,12 +20,20 @@ Per-test retries (`this.retries(n)` in Mocha) don't have this problem. They are
 recorded as the attempts of one case, which is what Qualflare's flakiness
 tracking is built on. Prefer them.
 
-## The runId must be shared by every worker
+## Programmatic runs in one process need the service
 
-`qf collect` merges only the newest run's files. Workers that each invent a
-runId produce one upload with one spec file's results. Add the service, or call
-`ensureRunId()`. See the README's [Setup](../README.md#setup). A worker that
-falls back to a random id says so on stderr.
+`qf collect` merges only the newest run's files, so every worker of one run has
+to agree on a run id. Without the service, each worker derives it from the
+`wdio run` launcher process (its pid and start time), which is the same for
+every worker of a run and new for the next run.
+
+The exception is a programmatic `Launcher` started more than once inside one
+Node process. Those runs share the process, so they derive the same id, and a
+later run would be merged with an earlier one. Add the service there: it sets
+a fresh id when each run starts and clears it when the run completes. (Not
+`ensureRunId()`, which sets the id once per process.) See the README's
+[Setup](../README.md#setup). A worker that has to fall back to a random id says
+so on stderr.
 
 ## On WebdriverIO 8 with Jasmine, `afterTest` is told a failed spec passed
 

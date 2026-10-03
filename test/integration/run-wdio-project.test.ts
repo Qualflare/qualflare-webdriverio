@@ -36,7 +36,8 @@ beforeAll(() => {
   const link = path.join(repoRoot, 'node_modules/@qualflare/webdriverio');
   fs.mkdirSync(path.dirname(link), { recursive: true });
   fs.rmSync(link, { recursive: true, force: true });
-  fs.symlinkSync('../..', link, 'dir');
+  // A junction on Windows: a directory symlink there needs admin rights.
+  fs.symlinkSync(process.platform === 'win32' ? repoRoot : '../..', link, process.platform === 'win32' ? 'junction' : 'dir');
 });
 
 afterAll(() => {
@@ -49,6 +50,7 @@ afterAll(() => {
  * about the written reports, never the exit code. */
 async function runFixture(
   framework: 'mocha' | 'jasmine',
+  configFile = 'wdio.conf.mjs',
 ): Promise<{ reports: Collect[]; files: string[]; resultsDir: string }> {
   const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qualflare-wdio-integration-'));
   runDirs.push(resultsDir);
@@ -67,10 +69,12 @@ async function runFixture(
   // extendEnv: false, or execa merges process.env back in and the deletions
   // above do nothing -- on GitHub Actions the workers then share
   // GITHUB_RUN_ID, which is correct behaviour but not what this asserts.
-  const result = await execa('npx', ['wdio', 'run', 'wdio.conf.mjs'], {
+  const result = await execa('npx', ['wdio', 'run', configFile], {
     cwd: fixtureDir,
     env,
     extendEnv: false,
+    // npx is a .cmd shim on Windows, which only a shell can run.
+    shell: process.platform === 'win32',
     reject: false,
   });
 
@@ -180,6 +184,23 @@ describe('@qualflare/webdriverio against a real WebdriverIO run', () => {
         expect(testCase.properties?.browserName).toBe('chrome');
         expect(testCase.properties?.browserVersion).toMatch(/^\d+\./);
       }
+    });
+  });
+
+  // What a wizard-generated config looks like: the reporter, no service. The
+  // workers derive one run id from the shared launcher process instead.
+  describe('without the service', () => {
+    it('still gives every worker one run id, derived from the launcher', async () => {
+      const first = await runFixture('mocha', 'wdio.noservice.conf.mjs');
+      const second = await runFixture('mocha', 'wdio.noservice.conf.mjs');
+      for (const { reports } of [first, second]) {
+        expect(reports).toHaveLength(2);
+        const ids = new Set(reports.map((r) => r.metadata.runId));
+        expect(ids.size).toBe(1);
+        expect([...ids][0]).toMatch(/^launch-[0-9a-f]{32}$/);
+      }
+      // A new `wdio run` is a new launcher process, so a new run.
+      expect(first.reports[0]!.metadata.runId).not.toBe(second.reports[0]!.metadata.runId);
     });
   });
 

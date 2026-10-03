@@ -38,8 +38,12 @@ jobs:
       - run: npx vitest run test/built
 
   integration:
-    name: Integration (real WebdriverIO run) — WebdriverIO ${{ matrix.wdio }}
-    runs-on: ubuntu-latest
+    name: Integration (real WebdriverIO run) — WebdriverIO ${{ matrix.wdio }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        # The steps below are bash; Windows runners default to PowerShell.
+        shell: bash
     needs: unit
     strategy:
       fail-fast: false
@@ -50,11 +54,24 @@ jobs:
         # maintained, and it differs in ways that matter here -- spec paths are
         # plain paths rather than file:// URLs, and Jasmine's afterTest reports
         # `passed: true` for a failed expectation.
+        #
+        # macOS and Windows legs because the service-less run id is derived from
+        # the launcher process, which each OS exposes differently: /proc on
+        # Linux (where WebdriverIO 9 also wraps each worker in xvfb-run), `ps` on
+        # macOS, PowerShell on Windows. See src/config/launcher-id.ts.
         include:
           - wdio: '8'
             node: '20'
+            os: ubuntu-latest
           - wdio: '9'
             node: '22'
+            os: ubuntu-latest
+          - wdio: '9'
+            node: '22'
+            os: macos-latest
+          - wdio: '9'
+            node: '22'
+            os: windows-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

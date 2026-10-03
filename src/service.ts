@@ -2,15 +2,17 @@
  * The launcher service: one runId for every worker, and a clean results
  * directory.
  *
- * WHY THIS IS REQUIRED, NOT OPTIONAL
+ * OPTIONAL SINCE 0.2.0, BUT NOT REDUNDANT
  *
  * Each spec file runs in its own worker process, each worker writes its own
  * report, and `qf collect` keeps only the files of the NEWEST `runId` it finds.
  * Measured: two workers with different runIds uploaded one worker's cases, and
- * the only trace was "ignored 1 file(s) from 1 earlier run(s)". Outside CI a
- * worker has nothing to derive a shared id from, so something that runs ONCE,
- * before the workers, has to mint it. That is what `onPrepare` is: it runs in
- * the launcher, and the workers it spawns inherit its environment.
+ * the only trace was "ignored 1 file(s) from 1 earlier run(s)". Without this
+ * service, each worker now derives the same id from the `wdio run` launcher
+ * process (config/launcher-id.ts). That cannot separate two programmatic
+ * `Launcher` runs inside one Node process, which share the process: this
+ * service can, because `onPrepare` runs once per run, in the launcher, and
+ * `onComplete` clears what it set. It also cleans stale reports.
  *
  * Inside CI the provider's run id is already shared by every worker (and by
  * every machine of a sharded job), so the service leaves it alone. Replacing it
