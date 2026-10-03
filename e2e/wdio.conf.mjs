@@ -18,7 +18,10 @@ export const config = {
   logLevel: 'error',
   framework: 'mocha',
   mochaOpts: { timeout: 60000 },
-  services: [['@qualflare/webdriverio/service', { resultsDir: '../e2e-results' }]],
+  // No Qualflare service, on purpose: since 0.2.0 the workers derive one run
+  // id from the launcher process, and this run proves it on every push (the
+  // verifier asserts one runId across the three workers).
+  services: [],
   reporters: [
     'spec',
     ['@qualflare/webdriverio', { resultsDir: '../e2e-results', environment: 'production' }],
