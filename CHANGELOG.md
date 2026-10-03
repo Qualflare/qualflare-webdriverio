@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1 — 2026-10-03
+
+- Metadata only: the npm homepage now points at
+  https://qualflare.com/webdriverio-test-reporting/, which has install and
+  setup instructions, instead of the GitHub README. No code changes.
+
 ## 0.2.0 — 2026-10-03
 
 - **The service is now optional.** Without it, every worker of one `wdio run`
